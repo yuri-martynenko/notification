@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Кросс-портальные уведомления</title>
+  <script src="//api.bitrix24.com/api/v1/"></script>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-icon">🔔</span>
+      <span class="brand-title">Уведомления с порталов</span>
+    </div>
+    <div class="topbar-actions">
+      <button class="btn btn-ghost" id="btn-refresh" title="Обновить все">
+        <span class="ico">⟳</span> Обновить
+      </button>
+      <button class="btn btn-ghost" id="btn-settings" title="Настройки">⚙</button>
+      <button class="btn btn-primary" id="btn-add">+ Подключить портал</button>
+    </div>
+  </header>
+
+  <main id="main">
+    <div id="empty-state" class="empty hidden">
+      <div class="empty-icon">📭</div>
+      <h2>Нет подключённых порталов</h2>
+      <p>Подключите свой первый Битрикс24 портал, чтобы видеть уведомления, задачи, чаты и CRM из него прямо здесь.</p>
+      <button class="btn btn-primary btn-lg" id="empty-add">+ Подключить портал</button>
+    </div>
+    <div id="portals-container"></div>
+  </main>
+
+  <!-- Add Portal Modal -->
+  <div class="modal hidden" id="modal-add">
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h3>Подключение портала</h3>
+        <button class="modal-close" data-close>×</button>
+      </div>
+      <div class="modal-body">
+        <div class="tabs">
+          <button class="tab active" data-tab="webhook">Входящий вебхук</button>
+          <button class="tab" data-tab="oauth">OAuth-приложение</button>
+        </div>
+
+        <div class="tab-content" id="tab-webhook">
+          <p class="hint">Создайте на удалённом портале <b>входящий вебхук</b> с правами: <code>im, imopenlines, tasks, crm, log, user</code>. Вставьте полученный URL ниже.</p>
+          <label class="field">
+            <span>Название (как будет показано)</span>
+            <input type="text" id="wh-title" placeholder="Например: Портал ЮМИТИ">
+          </label>
+          <label class="field">
+            <span>URL входящего вебхука</span>
+            <input type="text" id="wh-url" placeholder="https://your-portal.bitrix24.ru/rest/123/abcd1234.../">
+          </label>
+          <div class="modal-error hidden" id="wh-error"></div>
+          <div class="modal-actions">
+            <button class="btn btn-primary" id="wh-submit">Подключить</button>
+          </div>
+        </div>
+
+        <div class="tab-content hidden" id="tab-oauth">
+          <p class="hint">Создайте на удалённом портале <b>«Локальное приложение»</b> с типом «Серверное», скоупами <code>im, imopenlines, tasks, crm, log, user, imbot, placement</code> и redirect URI:</p>
+          <pre class="code-block" id="oauth-redirect-uri">https://.../api/oauth/callback</pre>
+          <label class="field">
+            <span>Название</span>
+            <input type="text" id="oauth-title" placeholder="Например: Портал ЮМИТИ">
+          </label>
+          <label class="field">
+            <span>Домен портала</span>
+            <input type="text" id="oauth-domain" placeholder="other.bitrix24.ru">
+          </label>
+          <label class="field">
+            <span>Client ID</span>
+            <input type="text" id="oauth-client-id" placeholder="local.5fa...">
+          </label>
+          <label class="field">
+            <span>Client Secret</span>
+            <input type="password" id="oauth-client-secret">
+          </label>
+          <div class="modal-error hidden" id="oauth-error"></div>
+          <div class="modal-actions">
+            <button class="btn btn-primary" id="oauth-submit">Авторизоваться →</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Settings Modal -->
+  <div class="modal hidden" id="modal-settings">
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h3>Настройки</h3>
+        <button class="modal-close" data-close>×</button>
+      </div>
+      <div class="modal-body">
+        <label class="field">
+          <span>Период автообновления (секунды) <small>15–3600</small></span>
+          <input type="number" id="set-poll" min="15" max="3600" step="15" value="120">
+        </label>
+        <fieldset class="field">
+          <legend>Какие уведомления показывать</legend>
+          <label class="check"><input type="checkbox" data-ent="im" checked> Чаты и сообщения</label>
+          <label class="check"><input type="checkbox" data-ent="notify" checked> Системные уведомления</label>
+          <label class="check"><input type="checkbox" data-ent="tasks" checked> Задачи</label>
+          <label class="check"><input type="checkbox" data-ent="crm" checked> CRM (лиды/сделки)</label>
+          <label class="check"><input type="checkbox" data-ent="livefeed" checked> Лента компании</label>
+        </fieldset>
+        <label class="check">
+          <input type="checkbox" id="set-zero"> Показывать порталы без новых событий
+        </label>
+        <div class="modal-actions">
+          <button class="btn btn-primary" id="set-submit">Сохранить</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Portal Inbound Webhook Info Modal -->
+  <div class="modal hidden" id="modal-inbound">
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h3>Получение событий в реальном времени</h3>
+        <button class="modal-close" data-close>×</button>
+      </div>
+      <div class="modal-body">
+        <p class="hint">Чтобы получать события мгновенно (а не ждать опроса каждые N секунд), создайте на этом портале <b>исходящий вебхук</b> или установите наш обработчик событий со следующим URL:</p>
+        <pre class="code-block" id="inbound-url"></pre>
+        <p class="hint">Подпишите его на события: <code>OnImNotifyAdd</code>, <code>OnImMessageAdd</code>, <code>OnTaskAdd</code>, <code>OnTaskUpdate</code>, <code>OnCrmLeadAdd</code>, <code>OnCrmDealAdd</code>, <code>OnCrmDealUpdate</code>, <code>OnBlogPostAdd</code>.</p>
+        <div class="modal-actions">
+          <button class="btn btn-ghost" id="inbound-copy">Скопировать URL</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

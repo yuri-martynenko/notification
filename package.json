@@ -1,0 +1,29 @@
+{
+  "name": "b24-notification-aggregator",
+  "version": "1.0.0",
+  "description": "Bitrix24 cross-portal notification counter aggregator. Collects notification counters (chat, notify, tasks, CRM, livefeed) from multiple Bitrix24 portals on a single host portal.",
+  "main": "src/index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "NODE_ENV=development node --watch src/index.js",
+    "migrate": "node src/db/migrate.js"
+  },
+  "dependencies": {
+    "axios": "^1.7.7",
+    "better-sqlite3": "^11.3.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.0",
+    "helmet": "^7.1.0",
+    "morgan": "^1.10.0"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yuri-martynenko/notification.git"
+  }
+}
