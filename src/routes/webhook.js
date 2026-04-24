@@ -2,8 +2,8 @@
 
 const express = require('express');
 const { db } = require('../db');
-const { getPortalById } = require('../services/portals');
-const { refreshPortalCounters } = require('../services/counters');
+const { getPortalById, listPortalMappings } = require('../services/portals');
+const { refreshCounters } = require('../services/counters');
 const logger = require('../utils/logger');
 
 const router = express.Router();
@@ -56,7 +56,12 @@ router.post('/:portalId/:secret', express.urlencoded({ extended: true }), async 
     refreshDebounce.set(portalId, now);
     setImmediate(async () => {
       try {
-        await refreshPortalCounters(portal);
+        const mappings = listPortalMappings(portalId);
+        for (const m of mappings) {
+          await refreshCounters(portal, m.remote_user_id).catch((e) =>
+            logger.warn(`Webhook refresh failed for portal ${portalId} user ${m.remote_user_id}: ${e.message}`)
+          );
+        }
       } catch (e) {
         logger.warn(`Webhook-triggered refresh failed for portal ${portalId}: ${e.message}`);
       }

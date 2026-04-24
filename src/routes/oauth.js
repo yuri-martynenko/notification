@@ -2,36 +2,22 @@
 
 const express = require('express');
 const axios = require('axios');
-const { requireSession, verify } = require('../middleware/auth');
-const { addOauthPortal, ensureHostUser } = require('../services/portals');
-const { refreshPortalCounters } = require('../services/counters');
-const { getPortalById } = require('../services/portals');
+const { requireSession, requireAdmin } = require('../middleware/auth');
+const { addOauthPortal, ensureHostUser, getPortalById, getMapping } = require('../services/portals');
+const { refreshCounters } = require('../services/counters');
 const logger = require('../utils/logger');
 
 const router = express.Router();
 
-/**
- * Step 1: User in our SPA clicks "Connect via OAuth".
- * They paste their app credentials from the remote portal:
- *   - Domain (e.g. "other.bitrix24.ru")
- *   - clientId, clientSecret (from a "локальное приложение" they registered there)
- * We then redirect them to the remote portal's authorization endpoint.
- *
- * GET /api/oauth/start?token=...&domain=other.bitrix24.ru&clientId=...&clientSecret=...&title=...
- */
-router.get('/start', requireSession, (req, res) => {
+router.get('/start', requireSession, requireAdmin, (req, res) => {
   const { domain, clientId, clientSecret, title } = req.query;
   if (!domain || !clientId || !clientSecret) {
     return res.status(400).json({ error: 'missing_params', message: 'domain, clientId, clientSecret are required' });
   }
-  // Encode state with our session info + the credentials we'll need at callback.
-  // (clientSecret in state is acceptable here because state goes back to us, not to the user, over HTTPS.)
   const state = Buffer.from(JSON.stringify({
     hostPortal: req.session.hostPortal,
     hostUserId: req.session.hostUserId,
-    domain,
-    clientId,
-    clientSecret,
+    domain, clientId, clientSecret,
     title: title || domain,
     nonce: Math.random().toString(36).slice(2),
   })).toString('base64url');
@@ -40,32 +26,19 @@ router.get('/start', requireSession, (req, res) => {
   const authUrl =
     `https://${domain}/oauth/authorize/?` +
     `client_id=${encodeURIComponent(clientId)}` +
-    `&response_type=code` +
-    `&redirect_uri=${encodeURIComponent(redirectUri)}` +
-    `&state=${state}`;
-
+    `&response_type=code&redirect_uri=${encodeURIComponent(redirectUri)}&state=${state}`;
   res.json({ ok: true, authUrl });
 });
 
-/**
- * Step 2: Remote portal redirects user back here with ?code=...&state=...
- */
 router.get('/callback', async (req, res) => {
   const { code, state } = req.query;
-  if (!code || !state) {
-    return res.status(400).send('Missing code or state');
-  }
+  if (!code || !state) return res.status(400).send('Missing code or state');
   let parsed;
-  try {
-    parsed = JSON.parse(Buffer.from(state, 'base64url').toString('utf8'));
-  } catch {
-    return res.status(400).send('Invalid state');
-  }
+  try { parsed = JSON.parse(Buffer.from(state, 'base64url').toString('utf8')); }
+  catch { return res.status(400).send('Invalid state'); }
 
   try {
-    // Exchange code for tokens
-    const tokenUrl = `https://oauth.bitrix.info/oauth/token/`;
-    const { data } = await axios.get(tokenUrl, {
+    const { data } = await axios.get('https://oauth.bitrix.info/oauth/token/', {
       params: {
         grant_type: 'authorization_code',
         client_id: parsed.clientId,
@@ -74,21 +47,21 @@ router.get('/callback', async (req, res) => {
       },
       timeout: 15000,
     });
-    if (!data.access_token) {
-      throw new Error('Token exchange returned no access_token');
-    }
+    if (!data.access_token) throw new Error('Token exchange returned no access_token');
 
-    // Get current user on remote portal
     const userResp = await axios.post(
       `https://${data.domain || parsed.domain}/rest/user.current.json`,
       { auth: data.access_token },
       { timeout: 15000 }
     );
-    const remoteUserId = userResp.data && userResp.data.result ? String(userResp.data.result.ID) : null;
+    const r = userResp.data && userResp.data.result;
+    const remoteUserId = r ? String(r.ID) : null;
+    const remoteUserName = r ? [r.NAME, r.LAST_NAME].filter(Boolean).join(' ').trim() : null;
+    const remoteUserEmail = r ? r.EMAIL : null;
 
     const hostUserDbId = ensureHostUser(parsed.hostPortal, parsed.hostUserId);
     const portalId = addOauthPortal({
-      hostUserId: hostUserDbId,
+      adminHostUserId: hostUserDbId,
       title: parsed.title,
       domain: data.domain || parsed.domain,
       accessToken: data.access_token,
@@ -97,13 +70,17 @@ router.get('/callback', async (req, res) => {
       clientId: parsed.clientId,
       clientSecret: parsed.clientSecret,
       remoteUserId,
+      remoteUserName,
+      remoteUserEmail,
     });
 
-    // Trigger initial fetch
     const portal = getPortalById(portalId);
-    refreshPortalCounters(portal).catch((e) =>
-      logger.warn(`Initial OAuth portal refresh failed: ${e.message}`)
-    );
+    const mapping = getMapping(hostUserDbId, portalId);
+    if (mapping) {
+      refreshCounters(portal, mapping.remote_user_id).catch((e) =>
+        logger.warn(`Initial OAuth portal refresh failed: ${e.message}`)
+      );
+    }
 
     res.send(`<!doctype html>
 <html><body style="font-family:sans-serif;padding:40px;text-align:center;">

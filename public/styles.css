@@ -183,3 +183,102 @@ fieldset.field legend { padding: 0 6px; font-size: 13px; color: var(--text-muted
   main { padding: 12px; }
   .entity-grid { grid-template-columns: 1fr; }
 }
+
+/* ========= Role + nav-tabs (admin/user) ========= */
+.role-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  background: #2fc6f6;
+  color: #fff;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  margin-left: 8px;
+}
+
+.tabs-nav {
+  display: flex;
+  gap: 4px;
+  margin: 0 16px;
+}
+.nav-tab {
+  background: none;
+  border: none;
+  padding: 8px 14px;
+  cursor: pointer;
+  font: inherit;
+  color: var(--text-muted);
+  border-bottom: 2px solid transparent;
+  transition: color .15s, border-color .15s;
+}
+.nav-tab:hover { color: var(--text); }
+.nav-tab.active { color: var(--primary-dark); border-bottom-color: var(--primary); }
+
+.mapping-info {
+  font-size: 11px;
+  color: #888;
+  margin-left: 6px;
+}
+
+/* ========= Admin: portal cards body ========= */
+.portal-card.admin .portal-body {
+  padding: 12px 18px;
+  background: #fafbfc;
+  border-top: 1px solid var(--border);
+}
+
+/* ========= Mappings table ========= */
+.section-head { margin-bottom: 16px; }
+.section-head h2 { margin: 0 0 6px; font-size: 18px; }
+
+.mappings-section {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 16px;
+  overflow: hidden;
+}
+.mappings-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  background: #fafbfc;
+  border-bottom: 1px solid var(--border);
+}
+.mappings-head h3 { margin: 0; font-size: 15px; }
+
+.mappings-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.mappings-table th,
+.mappings-table td {
+  padding: 10px 14px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+.mappings-table th {
+  background: #fafbfc;
+  font-weight: 600;
+  color: var(--text-muted);
+  font-size: 12px;
+  text-transform: uppercase;
+}
+.mappings-table tbody tr:hover { background: #f6f9fc; }
+.mappings-table tbody tr:last-child td { border-bottom: none; }
+
+/* ========= Inline row helper ========= */
+.row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0;
+}
+.row > span:first-child:not(input):not(button) {
+  color: var(--text-muted);
+  font-size: 12px;
+  text-align: center;
+  padding: 4px 0;
+}

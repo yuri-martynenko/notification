@@ -4,14 +4,10 @@ const { db } = require('../db');
 const b24 = require('./b24Client');
 const logger = require('../utils/logger');
 
-/**
- * Build link to the counter source on the remote portal.
- */
 function buildLink(portal, entity, payload = {}) {
   const base = `https://${portal.domain}`;
   switch (entity) {
     case 'im':
-      // /online/?IM_DIALOG=chatN or =userId
       if (payload.dialogId) return `${base}/online/?IM_DIALOG=${encodeURIComponent(payload.dialogId)}`;
       return `${base}/online/`;
     case 'notify':
@@ -35,13 +31,12 @@ function buildLink(portal, entity, payload = {}) {
 }
 
 /**
- * Fetch IM (chat) counters for the linked user on the remote portal.
- * Returns { total, items: [{ dialogId, title, count, link, lastMessageAt }] }
+ * IM counters. When using webhook auth, the counters returned reflect the webhook-owner user.
+ * For OAuth, they reflect the authenticated user. Passing remoteUserId is informational here
+ * (we use it only for link building and caching).
  */
-async function fetchIm(portal) {
-  // im.counters.get returns { TYPE: { CHAT: {...}, DIALOG: {...}, NOTIFY: N, ... } }
+async function fetchIm(portal, remoteUserId) {
   const counters = await b24.callMethod(portal, 'im.counter.get').catch(() => null);
-  // im.recent.get gives recent dialogs with counters
   const recent = await b24.callMethod(portal, 'im.recent.get', { SKIP_OPENLINES: 'N' }).catch(() => ({ result: [] }));
 
   let total = 0;
@@ -55,13 +50,11 @@ async function fetchIm(portal) {
         dialogId: r.id || r.chat_id || r.user_id,
         title: r.title || (r.user && (r.user.name || r.user.fullname)) || 'Чат',
         count: cnt,
-        avatar: (r.avatar && r.avatar.url) || (r.user && r.user.avatar) || null,
         lastMessageAt: r.message && r.message.date ? r.message.date : null,
         link: buildLink(portal, 'im', { dialogId: r.id || r.chat_id || r.user_id }),
       });
     }
   }
-  // If recent didn't yield anything but counters say there are unread — fallback to summary count
   if (total === 0 && counters && counters.result) {
     const c = counters.result;
     total = Number(c.TYPE?.CHAT || 0) + Number(c.TYPE?.DIALOG || 0) + Number(c.TYPE?.LINES || 0);
@@ -70,11 +63,7 @@ async function fetchIm(portal) {
   return { total, items: items.slice(0, 50) };
 }
 
-/**
- * Fetch notify (system notifications) counters.
- */
-async function fetchNotify(portal) {
-  // im.notify.history.get gives unread notifications. last_id=0 returns all unread.
+async function fetchNotify(portal, remoteUserId) {
   const data = await b24.callMethod(portal, 'im.notify.history.get', { LIMIT: 50 }).catch(() => null);
   const items = [];
   let total = 0;
@@ -93,28 +82,17 @@ async function fetchNotify(portal) {
     }
   }
   if (total === 0) {
-    // fallback to im.counter.get NOTIFY field
     const c = await b24.callMethod(portal, 'im.counter.get').catch(() => null);
     if (c && c.result) total = Number(c.result.TYPE?.NOTIFY || c.result.NOTIFY || 0);
   }
   return { total, items: items.slice(0, 50) };
 }
 
-/**
- * Fetch tasks counter — open tasks where user is responsible or accomplice.
- * On the remote portal, the "user" is identified by remote_user_id.
- */
-async function fetchTasks(portal) {
-  const remoteUserId = portal.remote_user_id;
+async function fetchTasks(portal, remoteUserId) {
   if (!remoteUserId) return { total: 0, items: [] };
-
-  // tasks.task.list with filter: not closed, responsible or accomplice
   const params = {
     select: ['ID', 'TITLE', 'STATUS', 'PRIORITY', 'DEADLINE', 'CREATED_DATE', 'GROUP_ID'],
-    filter: {
-      '<STATUS': 5, // 5 = completed
-      RESPONSIBLE_ID: remoteUserId,
-    },
+    filter: { '<STATUS': 5, RESPONSIBLE_ID: remoteUserId },
     order: { DEADLINE: 'ASC' },
     start: 0,
   };
@@ -135,14 +113,8 @@ async function fetchTasks(portal) {
   return { total: items.length, items: items.slice(0, 50) };
 }
 
-/**
- * Fetch CRM counters — open deals + new leads assigned to user.
- */
-async function fetchCrm(portal) {
-  const remoteUserId = portal.remote_user_id;
+async function fetchCrm(portal, remoteUserId) {
   if (!remoteUserId) return { total: 0, items: [] };
-
-  // Use batch to get deals + leads in one call.
   const cmd = {
     deals: `crm.deal.list?filter[ASSIGNED_BY_ID]=${remoteUserId}&filter[CLOSED]=N&select[]=ID&select[]=TITLE&select[]=STAGE_ID&select[]=DATE_MODIFY&select[]=OPPORTUNITY&select[]=CURRENCY_ID&order[DATE_MODIFY]=DESC`,
     leads: `crm.lead.list?filter[ASSIGNED_BY_ID]=${remoteUserId}&filter[STATUS_ID]=NEW&select[]=ID&select[]=TITLE&select[]=DATE_CREATE&order[DATE_CREATE]=DESC`,
@@ -176,23 +148,13 @@ async function fetchCrm(portal) {
   return { total: items.length, items };
 }
 
-/**
- * Fetch livefeed (company feed) — unread posts counter.
- */
-async function fetchLivefeed(portal) {
-  // log.blogpost.getusers / log.blogpost.user.get — APIs vary by portal version.
-  // Most reliable approximation: count entries in log.blogpost.get since last week not yet read.
-  const data = await b24.callMethod(portal, 'log.blogpost.get', {
-    LAST_ID: 0,
-    PAGE_SIZE: 50,
-  }).catch(() => null);
-
+async function fetchLivefeed(portal, remoteUserId) {
+  const data = await b24.callMethod(portal, 'log.blogpost.get', { LAST_ID: 0, PAGE_SIZE: 50 }).catch(() => null);
   const items = [];
   let total = 0;
   if (data && data.result) {
     const list = Array.isArray(data.result) ? data.result : (data.result.posts || []);
     for (const p of list.slice(0, 30)) {
-      // Treat all returned as "fresh"; portal API does not always expose unread flag.
       items.push({
         id: p.ID || p.id,
         title: (p.TITLE || p.title || '').slice(0, 100) || 'Запись в ленте',
@@ -207,41 +169,41 @@ async function fetchLivefeed(portal) {
   return { total, items };
 }
 
-const FETCHERS = {
-  im: fetchIm,
-  notify: fetchNotify,
-  tasks: fetchTasks,
-  crm: fetchCrm,
-  livefeed: fetchLivefeed,
-};
+const FETCHERS = { im: fetchIm, notify: fetchNotify, tasks: fetchTasks, crm: fetchCrm, livefeed: fetchLivefeed };
 
 /**
- * Fetch counters for a single portal across all entities.
- * Stores results in DB and returns aggregated summary.
+ * Refresh counters for a specific (portal, remote_user_id) pair.
  */
-async function refreshPortalCounters(portal, entitiesFilter = null) {
+async function refreshCounters(portal, remoteUserId, entitiesFilter = null) {
   const entities = entitiesFilter || Object.keys(FETCHERS);
   const result = {};
   const errors = [];
 
   for (const entity of entities) {
     try {
-      const data = await FETCHERS[entity](portal);
-      const stmt = db.prepare(`
-        INSERT INTO counters (portal_id, entity, total, items_json, updated_at)
-        VALUES (?, ?, ?, ?, strftime('%s','now'))
-        ON CONFLICT(portal_id, entity) DO UPDATE SET
+      const data = await FETCHERS[entity](portal, remoteUserId);
+      db.prepare(`
+        INSERT INTO counters (portal_id, remote_user_id, entity, total, items_json, updated_at)
+        VALUES (?, ?, ?, ?, ?, strftime('%s','now'))
+        ON CONFLICT(portal_id, remote_user_id, entity) DO UPDATE SET
           total = excluded.total,
           items_json = excluded.items_json,
           updated_at = strftime('%s','now')
-      `);
-      stmt.run(portal.id, entity, data.total, JSON.stringify(data.items));
+      `).run(portal.id, String(remoteUserId), entity, data.total, JSON.stringify(data.items));
       result[entity] = data;
     } catch (e) {
-      logger.warn(`Portal ${portal.id} (${portal.domain}) ${entity}: ${e.message}`);
+      logger.warn(`Portal ${portal.id} (${portal.domain}) user=${remoteUserId} ${entity}: ${e.message}`);
       errors.push({ entity, message: e.message });
     }
   }
+
+  db.prepare(`
+    INSERT INTO polling_state (portal_id, remote_user_id, last_polled_at, last_error)
+    VALUES (?, ?, strftime('%s','now'), ?)
+    ON CONFLICT(portal_id, remote_user_id) DO UPDATE SET
+      last_polled_at = strftime('%s','now'),
+      last_error = excluded.last_error
+  `).run(portal.id, String(remoteUserId), errors.length ? JSON.stringify(errors) : null);
 
   db.prepare(
     `UPDATE portals SET last_polled_at = strftime('%s','now'), last_error = ? WHERE id = ?`
@@ -251,19 +213,26 @@ async function refreshPortalCounters(portal, entitiesFilter = null) {
 }
 
 /**
- * Read aggregated counters for a host user from DB (no remote calls).
+ * Read counters for the specified host user.
+ * Uses each portal's mapping to pick the correct remote_user_id.
  */
-function readUserCounters(hostUserId) {
-  const portals = db.prepare(
-    `SELECT id, title, domain, auth_type, remote_user_id, enabled, last_polled_at, last_error
-     FROM portals WHERE host_user_id = ? AND enabled = 1`
-  ).all(hostUserId);
+function readUserCounters(hostUserDbId) {
+  const mappings = db.prepare(`
+    SELECT m.portal_id, m.remote_user_id, m.remote_user_name, m.remote_user_email,
+           p.title, p.domain, p.auth_type, p.enabled, p.last_polled_at, p.last_error
+    FROM user_mappings m
+    JOIN portals p ON p.id = m.portal_id
+    WHERE m.host_user_id = ? AND p.enabled = 1
+    ORDER BY p.title
+  `).all(hostUserDbId);
 
   const out = [];
-  for (const p of portals) {
-    const counters = db.prepare(
-      `SELECT entity, total, items_json, updated_at FROM counters WHERE portal_id = ?`
-    ).all(p.id);
+  for (const m of mappings) {
+    const counters = db.prepare(`
+      SELECT entity, total, items_json, updated_at FROM counters
+      WHERE portal_id = ? AND remote_user_id = ?
+    `).all(m.portal_id, m.remote_user_id);
+
     const byEntity = {};
     let portalTotal = 0;
     for (const c of counters) {
@@ -274,16 +243,25 @@ function readUserCounters(hostUserId) {
       };
       portalTotal += c.total;
     }
+
+    const state = db.prepare(
+      `SELECT last_polled_at, last_error FROM polling_state WHERE portal_id = ? AND remote_user_id = ?`
+    ).get(m.portal_id, m.remote_user_id);
+
     out.push({
       portal: {
-        id: p.id,
-        title: p.title,
-        domain: p.domain,
-        authType: p.auth_type,
-        remoteUserId: p.remote_user_id,
-        lastPolledAt: p.last_polled_at,
-        lastError: p.last_error ? JSON.parse(p.last_error) : null,
+        id: m.portal_id,
+        title: m.title,
+        domain: m.domain,
+        authType: m.auth_type,
       },
+      mapping: {
+        remoteUserId: m.remote_user_id,
+        remoteUserName: m.remote_user_name,
+        remoteUserEmail: m.remote_user_email,
+      },
+      lastPolledAt: state ? state.last_polled_at : null,
+      lastError: state && state.last_error ? safeParse(state.last_error) : null,
       total: portalTotal,
       counters: byEntity,
     });
@@ -291,4 +269,6 @@ function readUserCounters(hostUserId) {
   return out;
 }
 
-module.exports = { refreshPortalCounters, readUserCounters, buildLink, FETCHERS };
+function safeParse(s) { try { return JSON.parse(s); } catch { return null; } }
+
+module.exports = { refreshCounters, readUserCounters, buildLink, FETCHERS };

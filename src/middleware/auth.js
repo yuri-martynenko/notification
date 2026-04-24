@@ -1,12 +1,8 @@
 'use strict';
 
 const crypto = require('crypto');
-const logger = require('../utils/logger');
 const { ensureHostUser } = require('../services/portals');
 
-/**
- * Sign a session token { hostPortal, hostUserId, exp } with HMAC-SHA256.
- */
 function sign(payload) {
   const key = process.env.ENCRYPTION_KEY || 'dev';
   const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
@@ -29,9 +25,6 @@ function verify(token) {
   }
 }
 
-/**
- * Issue a session token for a host user.
- */
 function issueToken(hostPortal, hostUserId, ttlSec = 86400) {
   return sign({
     hostPortal,
@@ -40,10 +33,13 @@ function issueToken(hostPortal, hostUserId, ttlSec = 86400) {
   });
 }
 
-/**
- * Express middleware: requires X-App-Token header or ?token= query.
- * Populates req.session = { hostPortal, hostUserId, hostUserDbId }.
- */
+function isAdmin(hostUserId) {
+  const raw = (process.env.ADMIN_USER_IDS || '1').trim();
+  if (!raw) return String(hostUserId) === '1';
+  const list = raw.split(',').map((s) => s.trim()).filter(Boolean);
+  return list.includes(String(hostUserId));
+}
+
 function requireSession(req, res, next) {
   const token =
     req.get('x-app-token') ||
@@ -54,8 +50,19 @@ function requireSession(req, res, next) {
     return res.status(401).json({ error: 'unauthorized', message: 'Missing or invalid app token' });
   }
   const dbId = ensureHostUser(session.hostPortal, session.hostUserId);
-  req.session = { ...session, hostUserDbId: dbId };
+  req.session = {
+    ...session,
+    hostUserDbId: dbId,
+    isAdmin: isAdmin(session.hostUserId),
+  };
   next();
 }
 
-module.exports = { sign, verify, issueToken, requireSession };
+function requireAdmin(req, res, next) {
+  if (!req.session || !req.session.isAdmin) {
+    return res.status(403).json({ error: 'forbidden', message: 'Admin access required' });
+  }
+  next();
+}
+
+module.exports = { sign, verify, issueToken, requireSession, requireAdmin, isAdmin };

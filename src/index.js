@@ -15,6 +15,7 @@ const portalsRoute = require('./routes/portals');
 const countersRoute = require('./routes/counters');
 const webhookRoute = require('./routes/webhook');
 const oauthRoute = require('./routes/oauth');
+const hostUsersRoute = require('./routes/hostUsers');
 const poller = require('./workers/poller');
 const logger = require('./utils/logger');
 
@@ -47,6 +48,7 @@ app.use('/', installRoute);
 
 // API routes
 app.use('/api/portals', portalsRoute);
+app.use('/api/host-users', hostUsersRoute);
 app.use('/api', countersRoute);
 app.use('/api/webhook', webhookRoute);
 app.use('/api/oauth', oauthRoute);
