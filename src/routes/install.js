@@ -15,6 +15,41 @@ const router = express.Router();
  *
  * GET also supported for direct opening of /install (debugging).
  */
+/**
+ * Admin login for testing before the app is registered as a Bitrix24 placement.
+ * Usage: /admin-login?secret=<APP_ADMIN_SECRET>&domain=iumiti.bitrix24.ru&userId=1
+ * Returns a session token just like the normal Bitrix24 install flow.
+ */
+router.get('/admin-login', (req, res) => {
+  const secret = process.env.APP_ADMIN_SECRET;
+  if (!secret) {
+    return res.status(503).send('Admin login is disabled (APP_ADMIN_SECRET is not set)');
+  }
+  if (req.query.secret !== secret) {
+    return res.status(403).send('Forbidden');
+  }
+  const domain = req.query.domain || process.env.HOST_PORTAL_DOMAIN;
+  const userId = req.query.userId || req.query.user_id || '1';
+  if (!domain) return res.status(400).send('Missing domain parameter');
+
+  const token = issueToken(domain, userId);
+  res.send(`<!doctype html>
+<html><head><meta charset="utf-8"><title>Уведомления — admin</title></head>
+<body>
+<script>
+(function() {
+  try {
+    sessionStorage.setItem('app_token', ${JSON.stringify(token)});
+    sessionStorage.setItem('host_portal', ${JSON.stringify(domain)});
+    sessionStorage.setItem('host_user_id', ${JSON.stringify(String(userId))});
+  } catch (e) {}
+  window.location.replace('/?token=' + encodeURIComponent(${JSON.stringify(token)}));
+})();
+</script>
+<noscript>Включите JavaScript</noscript>
+</body></html>`);
+});
+
 router.all('/install', async (req, res) => {
   const params = { ...req.query, ...(req.body || {}) };
   const hostPortal = params.DOMAIN || params.domain || process.env.HOST_PORTAL_DOMAIN;
